@@ -1,0 +1,14 @@
+# Go build artifacts
+*.exe
+*.out
+*.test
+/bin/
+
+# Go workspace file (machine-local, multi-module editor setup)
+go.work
+go.work.sum
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
