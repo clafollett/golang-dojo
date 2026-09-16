@@ -81,6 +81,26 @@ goroutine needs to be its own goroutine. Everything else is leverage on top.
 
 ---
 
+## Practice safely — the sandbox 🧪
+
+The committed exercises are the *prompts*; your *answers* belong in a throwaway
+zone so you never fear committing half-finished practice. `make practice` copies
+exercises into `_practice/`, a **gitignored nested Go module**:
+
+```bash
+make practice EX=workerpool   # copy one exercise (or bare `make practice` for all)
+cd _practice && go test ./workerpool/   # fill it in, test it, repeat
+make practice EX=workerpool   # re-run any time to reset to a fresh blank
+```
+
+Why a *nested module* and not just `.gitignore`? Because `.gitignore` hides files
+from git, not from the Go compiler — `go test ./...` walks the filesystem, so a
+plain ignored dir would still get built. A directory with its own `go.mod` is a
+separate module that the root's `./...` skips entirely. Belt (nested module),
+suspenders (`_` prefix), and a parachute (`.gitignore`).
+
+---
+
 ## How this was built 🤖🤝
 
 This repo was built by a human directing an AI pair-programmer: the human set the

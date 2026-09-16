@@ -12,3 +12,8 @@ go.work.sum
 .DS_Store
 .idea/
 .vscode/
+
+# Local practice sandbox — copy an exercise here and fill it in without fear.
+# It's a nested Go module (its own go.mod), so `go ./...` at the repo root
+# ignores it too; the `_` prefix and this rule are belt-and-suspenders.
+/_practice/
