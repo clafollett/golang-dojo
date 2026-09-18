@@ -7,20 +7,35 @@
 //
 // Design notes worth saying out loud when you defend the design:
 //   - Token bucket (not fixed window) because it absorbs bursts up to `burst`
-//     while holding the long-run average at `rate` — no thundering herd at the
-//     top of each window, which a fixed window suffers from.
+//     while holding the long-run average at `rate`. There is NO window and no
+//     reset — refill is continuous — so there is no window boundary for a caller
+//     to double-dip at (the fixed-window "thundering herd").
+//   - `rate` is the sustained throughput; `burst` is the bucket capacity — the
+//     spike tolerance. They are independent knobs. The one real constraint:
+//     burst must be >= the largest single cost you ever spend, or that request
+//     can never succeed even with a full bucket.
+//   - Invalid config is REJECTED with an error, never a panic. A bad rate/burst
+//     is a caller mistake to surface, not a reason to crash the process.
 //   - The clock is injected (`now`) so behavior is testable without sleeping and
 //     so you could swap in a monotonic or distributed clock later.
 //   - This is in-process. Say the scaling boundary yourself: for a multi-replica
 //     service you push this to a shared store (Redis token bucket / sliding log,
-//     or an envoy/gateway limiter) so the limit is global, not per-pod. Naming
-//     that boundary unprompted is the principal-level signal.
+//     or an envoy/gateway limiter) so the limit is global, not per-pod.
 package ratelimiter
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"time"
+)
+
+// Config errors returned by New. Callers can match them with errors.Is and
+// decide how to handle a misconfiguration — the library never panics on them.
+var (
+	ErrInvalidRate  = errors.New("ratelimiter: rate must be a positive number")
+	ErrInvalidBurst = errors.New("ratelimiter: burst must be a positive number")
 )
 
 // Limiter hands out tokens per tenant. The zero value is not usable; call New.
@@ -39,8 +54,19 @@ type bucket struct {
 }
 
 // New builds a Limiter allowing `rate` requests/sec sustained, with bursts up to
-// `burst`. Pass nil for `now` to use time.Now.
-func New(rate, burst float64, now func() time.Time) *Limiter {
+// `burst`. Both must be positive numbers; otherwise New returns a nil Limiter and
+// a wrapped ErrInvalidRate / ErrInvalidBurst — it never panics. Pass nil for
+// `now` to use time.Now.
+//
+// Note the NaN guard: `rate <= 0` alone would let NaN through (every comparison
+// with NaN is false), and a NaN would then poison every bucket's token math.
+func New(rate, burst float64, now func() time.Time) (*Limiter, error) {
+	if rate <= 0 || math.IsNaN(rate) {
+		return nil, fmt.Errorf("%w: got %v", ErrInvalidRate, rate)
+	}
+	if burst <= 0 || math.IsNaN(burst) {
+		return nil, fmt.Errorf("%w: got %v", ErrInvalidBurst, burst)
+	}
 	if now == nil {
 		now = time.Now
 	}
@@ -49,7 +75,7 @@ func New(rate, burst float64, now func() time.Time) *Limiter {
 		burst:   burst,
 		now:     now,
 		buckets: make(map[string]*bucket),
-	}
+	}, nil
 }
 
 // Allow reports whether `tenant` may make one request now, consuming a token if
@@ -61,6 +87,9 @@ func (l *Limiter) Allow(tenant string) bool {
 
 // AllowN consumes n tokens for tenant if available. n lets a single expensive
 // tool call cost more than one token (weight by cost, not just count).
+//
+// If n > burst the request can never succeed, even with a full bucket — size
+// burst to be at least your largest expected n.
 func (l *Limiter) AllowN(tenant string, n float64) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
